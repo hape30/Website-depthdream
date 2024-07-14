@@ -11,7 +11,8 @@ from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 # Загружаем переменные окружения из .env файла
 load_dotenv()
 my_token = os.getenv("MY_KEY")
-database_url = os.getenv("DATABASE_URL")
+database_url_bot = os.getenv("DATABASE_URL_BOT")  # URL для базы данных сообщений бота
+database_url_tarologist = os.getenv("DATABASE_URL_TAROLOGIST")  # URL для базы данных сообщений таролога
 TAROLOGIST_CHAT_ID = int(os.getenv("TAROLOGIST_CHAT_ID"))
 
 # Настройка логирования
@@ -20,27 +21,41 @@ logging.basicConfig(level=logging.INFO)  # Устанавливаем урове
 # Создаем объект бота
 bot = telebot.TeleBot(my_token)
 
-# Настройка базы данных
-Base = declarative_base()
-engine = create_engine(database_url, client_encoding='utf8')
-Session = sessionmaker(bind=engine)
-session = Session()
+# Настройка базы данных для сообщений бота
+BaseBot = declarative_base()
+engine_bot = create_engine(database_url_bot, client_encoding='utf8')
+SessionBot = sessionmaker(bind=engine_bot)
+session_bot = SessionBot()
 
-# Определение таблицы для хранения сообщений
-class EncodedMessage(Base):
+# Настройка базы данных для сообщений таролога
+BaseTarologist = declarative_base()
+engine_tarologist = create_engine(database_url_tarologist, client_encoding='utf8')
+SessionTarologist = sessionmaker(bind=engine_tarologist)
+session_tarologist = SessionTarologist()
+
+# Определение таблицы для хранения сообщений бота
+class EncodedMessage(BaseBot):
     __tablename__ = 'encoded_messages'
     id = Column(Integer, primary_key=True)
     original_text = Column(String, nullable=False)
     encoded_vector = Column(LargeBinary, nullable=False)
 
+# Определение таблицы для хранения сообщений таролога
+class TarologistMessage(BaseTarologist):
+    __tablename__ = 'tarologist_messages'
+    id = Column(Integer, primary_key=True)
+    user_id = Column(BigInteger, nullable=False)
+    message_text = Column(String, nullable=False)
+
 # Определение таблицы для хранения активных сеансов общения
-class ActiveConversation(Base):
+class ActiveConversation(BaseTarologist):
     __tablename__ = 'active_conversations'
     user_id = Column(BigInteger, primary_key=True)
     active = Column(Boolean, nullable=False, default=True)
 
 # Создание таблиц в базе данных
-Base.metadata.create_all(engine)
+BaseBot.metadata.create_all(engine_bot)
+BaseTarologist.metadata.create_all(engine_tarologist)
 
 # Создаем объект для кодирования текста
 text_encoder = TextEncoder()
@@ -48,19 +63,19 @@ text_encoder = TextEncoder()
 # Функция для записи информации о сеансе общения в базу данных
 def start_conversation(user_id):
     conversation = ActiveConversation(user_id=user_id, active=True)
-    session.merge(conversation)
-    session.commit()
+    session_tarologist.merge(conversation)
+    session_tarologist.commit()
 
 # Функция для завершения сеанса общения
 def end_conversation(user_id):
-    conversation = session.query(ActiveConversation).filter_by(user_id=user_id, active=True).first()
+    conversation = session_tarologist.query(ActiveConversation).filter_by(user_id=user_id, active=True).first()
     if conversation:
         conversation.active = False
-        session.commit()
+        session_tarologist.commit()
 
 # Функция для проверки активного сеанса общения
 def is_conversation_active(user_id):
-    conversation = session.query(ActiveConversation).filter_by(user_id=user_id, active=True).first()
+    conversation = session_tarologist.query(ActiveConversation).filter_by(user_id=user_id, active=True).first()
     return conversation is not None
 
 # Обработчик команды /start
@@ -96,34 +111,46 @@ def callback_query(call):
 def handle_message(message):
     user_id = message.chat.id
 
-    # Проверяем, находится ли пользователь в сеансе общения с тарологом
-    if is_conversation_active(user_id):
-        bot.send_message(TAROLOGIST_CHAT_ID, f"Сообщение от пользователя {user_id}: {message.text}")
-    elif message.chat.id == TAROLOGIST_CHAT_ID:
-        # Получаем идентификатор пользователя, с которым общается таролог
+    if message.chat.id == TAROLOGIST_CHAT_ID:
+        # Таролог отправляет сообщение
         target_user_id = get_active_user_id_for_tarologist()
         if target_user_id:
             bot.send_message(target_user_id, f"Сообщение от таролога: {message.text}")
+            tarologist_message = TarologistMessage(
+                user_id=target_user_id,
+                message_text=message.text
+            )
+            session_tarologist.add(tarologist_message)
+            session_tarologist.commit()
         else:
             bot.reply_to(message, "Нет активных пользователей для общения.")
     else:
-        global last_message
-        last_message = message.text  # Сохраняем текст сообщения в глобальную переменную
-        bot.reply_to(message, "Я получил ваше сообщение. Оно было сохранено.")
-        logging.info(f"Сохранено в last_message: {last_message}")  # Логируем сообщение
+        # Пользователь отправляет сообщение
+        if is_conversation_active(user_id):
+            bot.send_message(TAROLOGIST_CHAT_ID, f"Сообщение от пользователя {user_id}: {message.text}")
+            tarologist_message = TarologistMessage(
+                user_id=user_id,
+                message_text=message.text
+            )
+            session_tarologist.add(tarologist_message)
+            session_tarologist.commit()
+        else:
+            # Обработка диалога с ботом
+            bot.reply_to(message, "Я получил ваше сообщение. Оно было сохранено.")
+            logging.info(f"Сохранено в last_message: {message.text}")  # Логируем сообщение
 
-        # Кодируем сообщение и сохраняем в базу данных
-        encoded_vector = text_encoder.encode(message.text)
-        encoded_message = EncodedMessage(
-            original_text=message.text,
-            encoded_vector=np.array(encoded_vector).tobytes()
-        )
-        session.add(encoded_message)
-        session.commit()
-        logging.info("Сообщение закодировано и сохранено в базу данных")
+            # Кодируем сообщение и сохраняем в базу данных
+            encoded_vector = text_encoder.encode(message.text)
+            encoded_message = EncodedMessage(
+                original_text=message.text,
+                encoded_vector=np.array(encoded_vector).tobytes()
+            )
+            session_bot.add(encoded_message)
+            session_bot.commit()
+            logging.info("Сообщение закодировано и сохранено в базу данных")
 
 def get_active_user_id_for_tarologist():
-    conversation = session.query(ActiveConversation).filter_by(active=True).first()
+    conversation = session_tarologist.query(ActiveConversation).filter_by(active=True).first()
     return conversation.user_id if conversation else None
 
 # Основная функция для запуска бота
