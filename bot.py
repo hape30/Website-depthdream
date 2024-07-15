@@ -12,7 +12,7 @@ from datetime import datetime
 # Загружаем переменные окружения из .env файла
 load_dotenv()
 my_token = os.getenv("MY_KEY")
-database_url_bot = os.getenv("DATABASE_URL_BOT")  # URL для базы данных сообщений бота
+database_url_bot = os.getenv("DATABASE_URL")  # URL для базы данных сообщений бота
 database_url_tarologist = os.getenv("DATABASE_URL_TAROLOGIST")  # URL для базы данных сообщений таролога
 TAROLOGIST_CHAT_ID = int(os.getenv("TAROLOGIST_CHAT_ID"))
 
