@@ -72,18 +72,26 @@ BaseTarologist.metadata.create_all(engine_tarologist)
 # Создаем объект для кодирования текста
 text_encoder = TextEncoder()
 
+# Словарь для отслеживания активных сеансов общения
+active_sessions = {}
+
 # Функция для записи информации о сеансе общения в базу данных
 def start_conversation(user_id, username=None):
     user = session_tarologist.query(User).get(user_id)
     if not user:
         user = User(id=user_id, username=username)
         session_tarologist.add(user)
+    else:
+        # Деактивируем все предыдущие сеансы общения для этого пользователя
+        session_tarologist.query(Conversation).filter_by(user_id=user_id, active=True).update({Conversation.active: False})
+    
     conversation = Conversation(user_id=user_id, active=True)
     session_tarologist.add(conversation)
     session_tarologist.commit()
+    active_sessions[user_id] = True
 
 def is_conversation_active(user_id):
-    return session_tarologist.query(Conversation).filter_by(user_id=user_id, active=True).count() > 0
+    return active_sessions.get(user_id, False)
 
 def get_active_user_id_for_tarologist():
     conversation = session_tarologist.query(Conversation).filter_by(active=True).first()
@@ -145,7 +153,7 @@ def callback_query(call):
 def handle_message(message):
     user_id = message.chat.id
 
-    if message.chat.id == TAROLOGIST_CHAT_ID:
+    if user_id == TAROLOGIST_CHAT_ID:
         target_user_id = get_active_user_id_for_tarologist()
         if target_user_id:
             bot.send_message(target_user_id, f"Сообщение от таролога: {message.text}")
