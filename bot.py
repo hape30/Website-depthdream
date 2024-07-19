@@ -17,7 +17,8 @@ database_url_tarologist = os.getenv("DATABASE_URL_TAROLOGIST")  # URL для б�
 TAROLOGIST_CHAT_ID = int(os.getenv("TAROLOGIST_CHAT_ID"))
 
 # Настройка логирования
-logging.basicConfig(level=logging.INFO)  # Устанавливаем уровень логирования INFO
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # Создаем объект бота
 bot = telebot.TeleBot(my_token)
@@ -77,7 +78,8 @@ active_sessions = {}
 
 # Функция для записи информации о сеансе общения в базу данных
 def start_conversation(user_id, username=None):
-    user = session_tarologist.query(User).get(user_id)
+    logger.info(f"Starting conversation with user_id: {user_id}, username: {username}")
+    user = session_tarologist.get(User, user_id)
     if not user:
         user = User(id=user_id, username=username)
         session_tarologist.add(user)
@@ -89,13 +91,17 @@ def start_conversation(user_id, username=None):
     session_tarologist.add(conversation)
     session_tarologist.commit()
     active_sessions[user_id] = True
+    logger.info(f"Conversation started for user_id: {user_id}")
 
 def is_conversation_active(user_id):
+    logger.info(f"Checking if conversation is active for user_id: {user_id} - {active_sessions.get(user_id, False)}")
     return active_sessions.get(user_id, False)
 
 def get_active_user_id_for_tarologist():
     conversation = session_tarologist.query(Conversation).filter_by(active=True).first()
-    return conversation.user_id if conversation else None
+    active_user_id = conversation.user_id if conversation else None
+    logger.info(f"Getting active user id for tarologist: {active_user_id}")
+    return active_user_id
 
 def save_message(user_id, sender_id, message_text):
     conversation = session_tarologist.query(Conversation).filter_by(user_id=user_id, active=True).first()
@@ -107,6 +113,8 @@ def save_message(user_id, sender_id, message_text):
         )
         session_tarologist.add(message)
         session_tarologist.commit()
+        logger.info(f"Saving message from sender_id: {sender_id} to user_id: {user_id} - {message_text}")
+        logger.info("Message saved")
 
 def save_bot_message(message_text):
     encoded_vector = text_encoder.encode(message_text)
@@ -116,14 +124,16 @@ def save_bot_message(message_text):
     )
     session_bot.add(encoded_message)
     session_bot.commit()
+    logger.info(f"Bot message saved: {message_text}")
 
 # Обработчик команды /start
 @bot.message_handler(commands=['start'])
 def handle_start(message):
     markup = InlineKeyboardMarkup()
-    contact_tarologist_button = InlineKeyboardButton("Связаться с тарологом", callback_data="contact_tarologist")
+    contact_tarologist_button = InlineKeyboardButton("Contact the tarologist", callback_data="contact_tarologist")
     markup.add(contact_tarologist_button)
-    bot.reply_to(message, "Привет! Я бот, созданный с помощью telebot. Вы можете связаться с тарологом, нажав кнопку ниже.", reply_markup=markup)
+    bot.reply_to(message, "Hi! I am a bot created to process your dreams using AI, and you can also contact the tarologist by clicking the button below.", reply_markup=markup)
+    logger.info(f"Received /start command from user_id: {message.chat.id}")
 
 # Обработчик команды для таролога
 @bot.message_handler(commands=['select_user'])
@@ -132,11 +142,12 @@ def handle_select_user(message):
         try:
             user_id = int(message.text.split()[1])
             start_conversation(user_id)
-            bot.reply_to(message, f"Связь с пользователем {user_id} установлена.")
+            bot.reply_to(message, f"Communication with the user {user_id} fixed.")
         except (IndexError, ValueError):
-            bot.reply_to(message, "Использование: /select_user <user_id>")
+            bot.reply_to(message, "Using: /select_user <user_id>")
     else:
-        bot.reply_to(message, "Эту команду может использовать только таролог.")
+        bot.reply_to(message, "This command can only be used by a tarologist.")
+    logger.info(f"Received /select_user command from user_id: {message.chat.id}")
 
 # Обработчик нажатий на inline-кнопки
 @bot.callback_query_handler(func=lambda call: True)
@@ -145,8 +156,9 @@ def callback_query(call):
         user_id = call.message.chat.id
         username = call.message.chat.username
         start_conversation(user_id, username)
-        bot.answer_callback_query(call.id, "Связь с тарологом установлена. Пожалуйста, отправьте ваше сообщение.")
-        bot.send_message(TAROLOGIST_CHAT_ID, f"Пользователь {user_id} ({username}) хочет связаться с вами.")
+        bot.answer_callback_query(call.id, "The connection with the tarologist has been established. Please send your message.")
+        bot.send_message(TAROLOGIST_CHAT_ID, f"User {user_id} ({username}) wants to contact you.")
+    logger.info(f"Received callback query from user_id: {call.message.chat.id} with data: {call.data}")
 
 # Обработчик всех сообщений
 @bot.message_handler(func=lambda message: True)
@@ -156,20 +168,22 @@ def handle_message(message):
     if user_id == TAROLOGIST_CHAT_ID:
         target_user_id = get_active_user_id_for_tarologist()
         if target_user_id:
-            bot.send_message(target_user_id, f"Сообщение от таролога: {message.text}")
+            bot.send_message(target_user_id, f"A message from the tarologist: {message.text}")
             save_message(target_user_id, TAROLOGIST_CHAT_ID, message.text)
         else:
-            bot.reply_to(message, "Нет активных пользователей для общения.")
+            bot.reply_to(message, "There are no active users to communicate with.")
     else:
         if is_conversation_active(user_id):
-            bot.send_message(TAROLOGIST_CHAT_ID, f"Сообщение от пользователя {user_id}: {message.text}")
+            bot.send_message(TAROLOGIST_CHAT_ID, f"A message from the user {user_id}: {message.text}")
             save_message(user_id, user_id, message.text)
         else:
-            bot.reply_to(message, "Я получил ваше сообщение. Оно было сохранено.")
+            bot.reply_to(message, "I got your message. It was saved.")
             save_bot_message(message.text)
+    logger.info(f"Received message from user_id: {message.chat.id} - {message.text}")
 
 # Основная функция для запуска бота
 def main():
+    logger.info("Starting bot polling")
     bot.polling(none_stop=True)
 
 if __name__ == '__main__':
