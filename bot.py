@@ -92,14 +92,30 @@ def start_conversation(user_id, username=None):
     session_tarologist.commit()
     active_sessions[user_id] = True
     logger.info(f"Conversation started for user_id: {user_id}")
+    logger.info(f"Active sessions: {active_sessions}")
+
+def end_conversation(user_id):
+    logger.info(f"Ending conversation with user_id: {user_id}")
+    conversation = session_tarologist.query(Conversation).filter_by(user_id=user_id, active=True).first()
+    if conversation:
+        conversation.active = False
+        session_tarologist.commit()
+        active_sessions.pop(user_id, None)
+        logger.info(f"Conversation ended for user_id: {user_id}")
+        logger.info(f"Active sessions: {active_sessions}")
+    else:
+        logger.warning(f"No active conversation found for user_id: {user_id}")
 
 def is_conversation_active(user_id):
-    logger.info(f"Checking if conversation is active for user_id: {user_id} - {active_sessions.get(user_id, False)}")
-    return active_sessions.get(user_id, False)
+    active = active_sessions.get(user_id, False)
+    logger.info(f"Checking if conversation is active for user_id: {user_id} - {active}")
+    return active
 
 def get_active_user_id_for_tarologist():
-    conversation = session_tarologist.query(Conversation).filter_by(active=True).first()
+    conversation = session_tarologist.query(Conversation).filter_by(active=True).order_by(Conversation.id.desc()).first()
     active_user_id = conversation.user_id if conversation else None
+    if active_user_id == TAROLOGIST_CHAT_ID:
+        active_user_id = None
     logger.info(f"Getting active user id for tarologist: {active_user_id}")
     return active_user_id
 
@@ -115,6 +131,8 @@ def save_message(user_id, sender_id, message_text):
         session_tarologist.commit()
         logger.info(f"Saving message from sender_id: {sender_id} to user_id: {user_id} - {message_text}")
         logger.info("Message saved")
+    else:
+        logger.warning(f"No active conversation found for user_id: {user_id}")
 
 def save_bot_message(message_text):
     encoded_vector = text_encoder.encode(message_text)
@@ -149,6 +167,20 @@ def handle_select_user(message):
         bot.reply_to(message, "This command can only be used by a tarologist.")
     logger.info(f"Received /select_user command from user_id: {message.chat.id}")
 
+# Обработчик команды для завершения сеанса
+@bot.message_handler(commands=['end_conversation'])
+def handle_end_conversation(message):
+    if message.chat.id == TAROLOGIST_CHAT_ID:
+        active_user_id = get_active_user_id_for_tarologist()
+        if active_user_id:
+            end_conversation(active_user_id)
+            bot.reply_to(message, f"Conversation with user {active_user_id} ended.")
+        else:
+            bot.reply_to(message, "There are no active users to end the conversation with.")
+    else:
+        bot.reply_to(message, "This command can only be used by a tarologist.")
+    logger.info(f"Received /end_conversation command from user_id: {message.chat.id}")
+
 # Обработчик нажатий на inline-кнопки
 @bot.callback_query_handler(func=lambda call: True)
 def callback_query(call):
@@ -160,9 +192,9 @@ def callback_query(call):
         bot.send_message(TAROLOGIST_CHAT_ID, f"User {user_id} ({username}) wants to contact you.")
     logger.info(f"Received callback query from user_id: {call.message.chat.id} with data: {call.data}")
 
-# Обработчик всех сообщений
-@bot.message_handler(func=lambda message: True)
-def handle_message(message):
+# Обработчик текстовых сообщений
+@bot.message_handler(content_types=['text'])
+def handle_text_message(message):
     user_id = message.chat.id
 
     if user_id == TAROLOGIST_CHAT_ID:
@@ -180,6 +212,50 @@ def handle_message(message):
             bot.reply_to(message, "I got your message. It was saved.")
             save_bot_message(message.text)
     logger.info(f"Received message from user_id: {message.chat.id} - {message.text}")
+
+# Обработчик фото
+@bot.message_handler(content_types=['photo'])
+def handle_photo_message(message):
+    user_id = message.chat.id
+    file_id = message.photo[-1].file_id
+
+    if user_id == TAROLOGIST_CHAT_ID:
+        target_user_id = get_active_user_id_for_tarologist()
+        if target_user_id:
+            bot.send_photo(target_user_id, file_id, caption="A photo from the tarologist")
+            save_message(target_user_id, TAROLOGIST_CHAT_ID, f"Photo: {file_id}")
+        else:
+            bot.reply_to(message, "There are no active users to communicate with.")
+    else:
+        if is_conversation_active(user_id):
+            bot.send_photo(TAROLOGIST_CHAT_ID, file_id, caption=f"A photo from the user {user_id}")
+            save_message(user_id, user_id, f"Photo: {file_id}")
+        else:
+            bot.reply_to(message, "I got your photo. It was saved.")
+            save_bot_message(f"Photo: {file_id}")
+    logger.info(f"Received photo from user_id: {message.chat.id} - file_id: {file_id}")
+
+# Обработчик видео
+@bot.message_handler(content_types=['video'])
+def handle_video_message(message):
+    user_id = message.chat.id
+    file_id = message.video.file_id
+
+    if user_id == TAROLOGIST_CHAT_ID:
+        target_user_id = get_active_user_id_for_tarologist()
+        if target_user_id:
+            bot.send_video(target_user_id, file_id, caption="A video from the tarologist")
+            save_message(target_user_id, TAROLOGIST_CHAT_ID, f"Video: {file_id}")
+        else:
+            bot.reply_to(message, "There are no active users to communicate with.")
+    else:
+        if is_conversation_active(user_id):
+            bot.send_video(TAROLOGIST_CHAT_ID, file_id, caption=f"A video from the user {user_id}")
+            save_message(user_id, user_id, f"Video: {file_id}")
+        else:
+            bot.reply_to(message, "I got your video. It was saved.")
+            save_bot_message(f"Video: {file_id}")
+    logger.info(f"Received video from user_id: {message.chat.id} - file_id: {file_id}")
 
 # Основная функция для запуска бота
 def main():
