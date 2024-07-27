@@ -257,6 +257,7 @@ def handle_video_message(message):
             save_bot_message(f"Video: {file_id}")
     logger.info(f"Received video from user_id: {message.chat.id} - file_id: {file_id}")
 
+
 # Основная функция для запуска бота
 def main():
     logger.info("Starting bot polling")
