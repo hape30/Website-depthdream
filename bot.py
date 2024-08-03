@@ -1,5 +1,6 @@
 import os
 import logging
+import os.path
 from dotenv import load_dotenv
 import telebot
 from sqlalchemy import create_engine, Column, Integer, String, LargeBinary, BigInteger, Boolean, ForeignKey, DateTime
@@ -8,14 +9,19 @@ import numpy as np
 from encode import TextEncoder
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 from datetime import datetime, timedelta
-
+from google.auth.transport.requests import Request
+from google.oauth2.credentials import Credentials
+from google_auth_oauthlib.flow import InstalledAppFlow
+from googleapiclient.discovery import build
+from googleapiclient.errors import HttpError
+import datetime
 # Загружаем переменные окружения из .env файла
 load_dotenv()
 my_token = os.getenv("MY_KEY")
 database_url_bot = os.getenv("DATABASE_URL")  # URL для базы данных сообщений бота
 database_url_tarologist = os.getenv("DATABASE_URL_TAROLOGIST")  # URL для базы данных сообщений таролога
 TAROLOGIST_CHAT_ID = int(os.getenv("TAROLOGIST_CHAT_ID"))
-
+CONNECT_GOOGLE_API_KEY = os.getenv("CONNECT_GOOGLE")
 # Настройка логирования
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
