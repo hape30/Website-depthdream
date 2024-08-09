@@ -14,7 +14,7 @@ from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
-import datetime
+
 # Загружаем переменные окружения из .env файла
 load_dotenv()
 my_token = os.getenv("MY_KEY")
@@ -22,6 +22,7 @@ database_url_bot = os.getenv("DATABASE_URL")  # URL для базы данных
 database_url_tarologist = os.getenv("DATABASE_URL_TAROLOGIST")  # URL для базы данных сообщений таролога
 TAROLOGIST_CHAT_ID = int(os.getenv("TAROLOGIST_CHAT_ID"))
 CONNECT_GOOGLE_API_KEY = os.getenv("CONNECT_GOOGLE")
+
 # Настройка логирования
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -90,9 +91,60 @@ text_encoder = TextEncoder()
 # Словарь для отслеживания активных сеансов общения
 active_sessions = {}
 
+# Google Calendar API scopes
+SCOPES = ['https://www.googleapis.com/auth/calendar']
+
+# Функция для авторизации Google Calendar API
+def get_google_calendar_service():
+    creds = None
+    if os.path.exists('token.json'):
+        creds = Credentials.from_authorized_user_file('token.json', SCOPES)
+    if not creds or not creds.valid:
+        if creds and creds.expired and creds.refresh_token:
+            creds.refresh(Request())
+        else:
+            flow = InstalledAppFlow.from_client_secrets_file(
+                'credentials.json', SCOPES)
+            creds = flow.run_local_server(port=0)
+        with open('token.json', 'w') as token:
+            token.write(creds.to_json())
+    service = build('calendar', 'v3', credentials=creds)
+    return service
+
+# Функция для создания события в Google Calendar
+def create_google_calendar_event(user_id, scheduled_time):
+    service = get_google_calendar_service()
+
+    event = {
+        'summary': 'Tarologist Session',
+        'description': f'Session with user {user_id}.',
+        'start': {
+            'dateTime': scheduled_time.isoformat(),
+            'timeZone': 'UTC',
+        },
+        'end': {
+            'dateTime': (scheduled_time + timedelta(hours=1)).isoformat(),
+            'timeZone': 'UTC',
+        },
+        'attendees': [
+            {'email': 'tarologist_email@gmail.com'},  # Email таролога
+            {'email': 'user_email@gmail.com'},  # Email пользователя (замените на реальный email пользователя)
+        ],
+        'reminders': {
+            'useDefault': False,
+            'overrides': [
+                {'method': 'email', 'minutes': 30},
+                {'method': 'popup', 'minutes': 30},
+            ],
+        },
+    }
+
+    event = service.events().insert(calendarId='primary', body=event).execute()
+    logger.info(f"Event created: {event.get('htmlLink')}")
+
 # Функция для записи информации о сеансе общения в базу данных
 def start_conversation(user_id, username=None):
-    logger.info(f"Starting conversation with user_id: {user_id}, username: {username}")
+    logger.info(f"Начало разговора с помощью user_id: {user_id}, username: {username}")
     user = session_tarologist.get(User, user_id)
     if not user:
         user = User(id=user_id, username=username)
@@ -105,24 +157,24 @@ def start_conversation(user_id, username=None):
     session_tarologist.add(conversation)
     session_tarologist.commit()
     active_sessions[user_id] = True
-    logger.info(f"Conversation started for user_id: {user_id}")
-    logger.info(f"Active sessions: {active_sessions}")
+    logger.info(f"Разговор начался сr user_id: {user_id}")
+    logger.info(f"Активные сеансы: {active_sessions}")
 
 def end_conversation(user_id):
-    logger.info(f"Ending conversation with user_id: {user_id}")
+    logger.info(f"Завершение разговора с помощью user_id: {user_id}")
     conversation = session_tarologist.query(Conversation).filter_by(user_id=user_id, active=True).first()
     if conversation:
         conversation.active = False
         session_tarologist.commit()
         active_sessions.pop(user_id, None)
-        logger.info(f"Conversation ended for user_id: {user_id}")
-        logger.info(f"Active sessions: {active_sessions}")
+        logger.info(f"Диалог завершен для user_id: {user_id}")
+        logger.info(f"Активные сеансы: {active_sessions}")
     else:
-        logger.warning(f"No active conversation found for user_id: {user_id}")
+        logger.warning(f"Не найдено активного диалога для user_id: {user_id}")
 
 def is_conversation_active(user_id):
     active = active_sessions.get(user_id, False)
-    logger.info(f"Checking if conversation is active for user_id: {user_id} - {active}")
+    logger.info(f"Проверка, активен ли диалог для user_id: {user_id} - {active}")
     return active
 
 def get_active_user_id_for_tarologist():
@@ -130,7 +182,7 @@ def get_active_user_id_for_tarologist():
     active_user_id = conversation.user_id if conversation else None
     if active_user_id == TAROLOGIST_CHAT_ID:
         active_user_id = None
-    logger.info(f"Getting active user id for tarologist: {active_user_id}")
+    logger.info(f"Получение активного идентификатора пользователя для таролога:{active_user_id}")
     return active_user_id
 
 def save_message(user_id, sender_id, message_text):
@@ -143,10 +195,10 @@ def save_message(user_id, sender_id, message_text):
         )
         session_tarologist.add(message)
         session_tarologist.commit()
-        logger.info(f"Saving message from sender_id: {sender_id} to user_id: {user_id} - {message_text}")
+        logger.info(f"Сохранение сообщения из идентификатора отправителя: {sender_id} to user_id: {user_id} - {message_text}")
         logger.info("Message saved")
     else:
-        logger.warning(f"No active conversation found for user_id: {user_id}")
+        logger.warning(f"Не найдено активного диалога для user_id: {user_id}")
 
 def save_bot_message(message_text):
     encoded_vector = text_encoder.encode(message_text)
@@ -156,7 +208,7 @@ def save_bot_message(message_text):
     )
     session_bot.add(encoded_message)
     session_bot.commit()
-    logger.info(f"Bot message saved: {message_text}")
+    logger.info(f"Сообщение бота сохранено: {message_text}")
 
 # Функция для записи на сеанс
 def schedule_session(user_id, scheduled_time):
@@ -169,144 +221,48 @@ def schedule_session(user_id, scheduled_time):
     session = Session(user_id=user_id, scheduled_time=scheduled_time)
     session_tarologist.add(session)
     session_tarologist.commit()
-    logger.info(f"Session scheduled for user_id: {user_id} at {scheduled_time}")
+    logger.info(f"Сеанс, запланированный для user_id: {user_id} at {scheduled_time}")
+    
+    # Создаем событие в Google Calendar
+    create_google_calendar_event(user_id, scheduled_time)
 
 # Обработчик команды /start
 @bot.message_handler(commands=['start'])
 def handle_start(message):
     markup = InlineKeyboardMarkup()
-    contact_tarologist_button = InlineKeyboardButton("Contact the tarologist", callback_data="contact_tarologist")
+    contact_tarologist_button = InlineKeyboardButton("Обратитесь к тарологу", callback_data="contact_tarologist")
     schedule_session_button = InlineKeyboardButton("Schedule a session", callback_data="schedule_session")
     markup.add(contact_tarologist_button, schedule_session_button)
-    bot.reply_to(message, "Hi! I am a bot created to process your dreams using AI, and you can also contact the tarologist by clicking the button below.", reply_markup=markup)
+    bot.reply_to(message, "Привет! Я - бот, созданный для обработки ваших снов с помощью искусственного интеллекта, и вы также можете связаться с тарологом, нажав на кнопку ниже.", reply_markup=markup)
     logger.info(f"Received /start command from user_id: {message.chat.id}")
 
-# Обработчик команды для таролога
-@bot.message_handler(commands=['select_user'])
-def handle_select_user(message):
-    if message.chat.id == TAROLOGIST_CHAT_ID:
-        try:
-            user_id = int(message.text.split()[1])
-            start_conversation(user_id)
-            bot.reply_to(message, f"Communication with the user {user_id} fixed.")
-        except (IndexError, ValueError):
-            bot.reply_to(message, "Using: /select_user <user_id>")
-    else:
-        bot.reply_to(message, "This command can only be used by a tarologist.")
-    logger.info(f"Received /select_user command from user_id: {message.chat.id}")
-
-# Обработчик команды для завершения сеанса
-@bot.message_handler(commands=['end_conversation'])
-def handle_end_conversation(message):
-    if message.chat.id == TAROLOGIST_CHAT_ID:
-        active_user_id = get_active_user_id_for_tarologist()
-        if active_user_id:
-            end_conversation(active_user_id)
-            bot.reply_to(message, f"Conversation with user {active_user_id} ended.")
-        else:
-            bot.reply_to(message, "There are no active users to end the conversation with.")
-    else:
-        bot.reply_to(message, "This command can only be used by a tarologist.")
-    logger.info(f"Received /end_conversation command from user_id: {message.chat.id}")
-
-# Обработчик нажатий на inline-кнопки
+# Обработчик обратных вызовов от Inline кнопок
 @bot.callback_query_handler(func=lambda call: True)
-def callback_query(call):
+def handle_callback(call):
+    user_id = call.message.chat.id
     if call.data == "contact_tarologist":
-        user_id = call.message.chat.id
-        username = call.message.chat.username
-        start_conversation(user_id, username)
-        bot.answer_callback_query(call.id, "The connection with the tarologist has been established. Please send your message.")
-        bot.send_message(TAROLOGIST_CHAT_ID, f"User {user_id} ({username}) wants to contact you.")
+        start_conversation(user_id, call.message.chat.username)
+        bot.send_message(user_id, "Пожалуйста, напишите свое сообщение тарологу.")
     elif call.data == "schedule_session":
-        bot.answer_callback_query(call.id, "Please send the date and time for the session (YYYY-MM-DD HH:MM).")
-        bot.register_next_step_handler(call.message, process_session_schedule)
-    logger.info(f"Received callback query from user_id: {call.message.chat.id} with data: {call.data}")
-
-def process_session_schedule(message):
-    try:
-        scheduled_time = datetime.strptime(message.text, "%Y-%m-%d %H:%M")
-        schedule_session(message.chat.id, scheduled_time)
-        bot.reply_to(message, f"Session scheduled for {scheduled_time.strftime('%Y-%m-%d %H:%M')}.")
-        # Отправить уведомление тарологу
-        bot.send_message(TAROLOGIST_CHAT_ID, f"New session scheduled by user {message.chat.id} at {scheduled_time}.")
-    except ValueError:
-        bot.reply_to(message, "Invalid date format. Please use YYYY-MM-DD HH:MM.")
+        schedule_session(user_id, datetime.utcnow() + timedelta(days=1))  # Пример записи на сеанс через 1 день
 
 # Обработчик текстовых сообщений
-@bot.message_handler(content_types=['text'])
-def handle_text_message(message):
+@bot.message_handler(func=lambda message: True)
+def handle_message(message):
     user_id = message.chat.id
-
-    if user_id == TAROLOGIST_CHAT_ID:
-        target_user_id = get_active_user_id_for_tarologist()
-        if target_user_id:
-            bot.send_message(target_user_id, f"A message from the tarologist: {message.text}")
-            save_message(target_user_id, TAROLOGIST_CHAT_ID, message.text)
+    if is_conversation_active(user_id):
+        save_message(user_id, user_id, message.text)
+        save_bot_message("Ваше сообщение отправлено тарологу.")
+        bot.send_message(TAROLOGIST_CHAT_ID, f"User {message.chat.username}: {message.text}")
+    elif user_id == TAROLOGIST_CHAT_ID:
+        active_user_id = get_active_user_id_for_tarologist()
+        if active_user_id:
+            save_message(active_user_id, user_id, message.text)
+            bot.send_message(active_user_id, f"Tarologist: {message.text}")
         else:
-            bot.reply_to(message, "There are no active users to communicate with.")
+            bot.send_message(user_id, "Активных разговоров нет")
     else:
-        if is_conversation_active(user_id):
-            bot.send_message(TAROLOGIST_CHAT_ID, f"A message from the user {user_id}: {message.text}")
-            save_message(user_id, user_id, message.text)
-        else:
-            bot.reply_to(message, "I got your message. It was saved.")
-            save_bot_message(message.text)
-    logger.info(f"Received message from user_id: {message.chat.id} - {message.text}")
-
-# Обработчик фото
-@bot.message_handler(content_types=['photo'])
-def handle_photo_message(message):
-    user_id = message.chat.id
-    file_id = message.photo[-1].file_id
-
-    if user_id == TAROLOGIST_CHAT_ID:
-        target_user_id = get_active_user_id_for_tarologist()
-        if target_user_id:
-            bot.send_photo(target_user_id, file_id, caption="A photo from the tarologist")
-            save_message(target_user_id, TAROLOGIST_CHAT_ID, f"Photo: {file_id}")
-        else:
-            bot.reply_to(message, "There are no active users to communicate with.")
-    else:
-        if is_conversation_active(user_id):
-            bot.send_photo(TAROLOGIST_CHAT_ID, file_id, caption=f"A photo from the user {user_id}")
-            save_message(user_id, user_id, f"Photo: {file_id}")
-        else:
-            bot.reply_to(message, "I got your photo. It was saved.")
-            save_bot_message(f"Photo: {file_id}")
-    logger.info(f"Received photo from user_id: {message.chat.id} - file_id: {file_id}")
-
-# Обработчик видео
-@bot.message_handler(content_types=['video'])
-def handle_video_message(message):
-    user_id = message.chat.id
-    file_id = message.video.file_id
-
-    if user_id == TAROLOGIST_CHAT_ID:
-        target_user_id = get_active_user_id_for_tarologist()
-        if target_user_id:
-            bot.send_video(target_user_id, file_id, caption="A video from the tarologist")
-            save_message(target_user_id, TAROLOGIST_CHAT_ID, f"Video: {file_id}")
-        else:
-            bot.reply_to(message, "There are no active users to communicate with.")
-    else:
-        if is_conversation_active(user_id):
-            bot.send_video(TAROLOGIST_CHAT_ID, file_id, caption=f"A video from the user {user_id}")
-            save_message(user_id, user_id, f"Video: {file_id}")
-        else:
-            bot.reply_to(message, "I got your video. It was saved.")
-            save_bot_message(f"Video: {file_id}")
-    logger.info(f"Received video from user_id: {message.chat.id} - file_id: {file_id}")
-
-# Функция отправки напоминания о предстоящем сеансе
-def send_session_reminder():
-    now = datetime.utcnow()
-    reminder_time = now + timedelta(minutes=30)  # Отправлять напоминание за 30 минут до сеанса
-    sessions = session_tarologist.query(Session).filter(Session.scheduled_time.between(now, reminder_time), Session.confirmed == False).all()
-    for session in sessions:
-        bot.send_message(session.user_id, f"Reminder: Your session is scheduled at {session.scheduled_time.strftime('%Y-%m-%d %H:%M')} (UTC). Please confirm your attendance.")
-        session.confirmed = True
-        session_tarologist.commit()
+        bot.send_message(user_id, "Пожалуйста, нажмите на 'Связаться с тарологом', чтобы начать разговор.")
 
 # Основная функция для запуска бота
 def main():
